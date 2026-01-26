@@ -3,174 +3,209 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Kalkulator Real-time (10 Input/Output)</title>
-
-  <!-- Bootstrap 5 -->
+  <title>Kalkulator 10 Input Output (Realtime)</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .result-good { border-color: #198754 !important; }
+    .result-bad  { border-color: #dc3545 !important; }
+    .toast-area { position: fixed; right: 1rem; bottom: 1rem; z-index: 1080; }
+  </style>
 </head>
 <body class="bg-light">
   <div class="container py-4">
     <div class="d-flex align-items-center justify-content-between mb-3">
-      <h1 class="h4 m-0">Kalkulator Real-time (10 buah)</h1>
-      <span class="badge text-bg-secondary">Operator: +  −  ×  ÷  ( )  ^  %</span>
+      <div>
+        <h1 class="h4 mb-1">Kalkulator Realtime (10 Baris)</h1>
+        <div class="text-muted small">
+          Operator: <span class="mono">+ - * / ( ) ^ %</span> | Percent postfix: <span class="mono">10% = 0.1</span>
+        </div>
+      </div>
+      <button class="btn btn-outline-secondary btn-sm" id="btnClearAll">Clear Semua</button>
     </div>
 
-    <div class="alert alert-info small mb-4">
-      Contoh: <code>(10+2)*3</code>, <code>2^5</code>, <code>200*10%</code>, <code>(50%+0.2)*100</code><br/>
-      Catatan: <code>^</code> = pangkat, dan <code>10%</code> diperlakukan sebagai <code>0.1</code>.
-    </div>
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <div class="row g-2 fw-semibold text-muted small mb-2">
+          <div class="col-12 col-lg-6">Input Ekspresi</div>
+          <div class="col-12 col-lg-4">Output (Realtime)</div>
+          <div class="col-12 col-lg-2 text-lg-end">Aksi</div>
+        </div>
 
-    <div id="calcList" class="row g-3"></div>
+        <div id="rows"></div>
+
+        <hr class="my-3">
+        <div class="small text-muted">
+          Contoh: <span class="mono">((2+3)*4)^2</span>, <span class="mono">200 * 10%</span>, <span class="mono">(5+5)%3</span>
+        </div>
+      </div>
+    </div>
   </div>
 
+  <div class="toast-area" id="toastArea"></div>
+
   <script>
-    // ====== Helpers ======
+    // ---------- UI ----------
+    const rowsEl = document.getElementById('rows');
+    const btnClearAll = document.getElementById('btnClearAll');
 
-    // Ubah ekspresi agar bisa dihitung JS:
-    // - '^' -> '**' (pangkat)
-    // - 'angka%' -> '(angka/100)'
-    // - sanitasi karakter yang diperbolehkan
-    function normalizeExpression(raw) {
-      let expr = (raw ?? "").trim();
+    const ROW_COUNT = 10;
+    const rowState = []; // { inputEl, outputEl }
 
-      if (!expr) return "";
+    function createRow(i) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'row g-2 align-items-start mb-2';
 
-      // Batasi karakter yang diperbolehkan (angka, spasi, . , operator, kurung, persen, ^)
-      // Jika ada karakter lain, langsung dianggap invalid.
-      const allowed = /^[0-9+\-*/().^%\s]+$/;
-      if (!allowed.test(expr)) throw new Error("Karakter tidak valid");
-
-      // Ganti '^' jadi '**'
-      expr = expr.replace(/\^/g, "**");
-
-      // Tangani persen: "12%" => "(12/100)"
-      // Ini menangani angka desimal juga: "12.5%"
-      expr = expr.replace(/(\d+(?:\.\d+)?)\s*%/g, "($1/100)");
-
-      // Rapikan spasi
-      expr = expr.replace(/\s+/g, " ");
-
-      return expr;
-    }
-
-    function tryEvaluate(raw) {
-      const expr = normalizeExpression(raw);
-
-      if (!expr) return { ok: true, value: "" };
-
-      // Evaluasi dengan Function (setelah disanitasi ketat).
-      // Pakai "use strict" agar lebih aman.
-      const fn = new Function('"use strict"; return (' + expr + ');');
-      const val = fn();
-
-      if (typeof val !== "number" || !Number.isFinite(val)) {
-        return { ok: false, value: "Error" };
-      }
-
-      // Format hasil (bisa kamu ubah sesuai selera)
-      const formatted = new Intl.NumberFormat("id-ID", {
-        maximumFractionDigits: 12
-      }).format(val);
-
-      return { ok: true, value: formatted };
-    }
-
-    // ====== UI builder ======
-    const calcList = document.getElementById("calcList");
-
-    function makeCalcCard(i) {
-      const col = document.createElement("div");
-      col.className = "col-12 col-lg-6";
-
-      col.innerHTML = `
-        <div class="card shadow-sm">
-          <div class="card-body">
-            <div class="d-flex align-items-center justify-content-between mb-2">
-              <div class="fw-semibold">Kalkulator #${i}</div>
-              <button class="btn btn-sm btn-outline-secondary" type="button" data-action="clear" data-index="${i}">
-                Clear
-              </button>
-            </div>
-
-            <label class="form-label small text-muted mb-1" for="expr-${i}">Input</label>
-            <input
-              id="expr-${i}"
-              class="form-control"
-              type="text"
-              inputmode="text"
-              placeholder="Misal: (10+2)*3, 2^5, 200*10%"
-              data-role="expr"
-              data-index="${i}"
-              autocomplete="off"
-            />
-
-            <div class="mt-3">
-              <label class="form-label small text-muted mb-1" for="out-${i}">Output (real-time)</label>
-              <input
-                id="out-${i}"
-                class="form-control"
-                type="text"
-                data-role="out"
-                data-index="${i}"
-                readonly
-                placeholder="Hasil akan muncul di sini"
-              />
-              <div class="form-text" id="hint-${i}"></div>
-            </div>
+      wrapper.innerHTML = `
+        <div class="col-12 col-lg-6">
+          <div class="input-group">
+            <span class="input-group-text mono">${String(i+1).padStart(2,'0')}</span>
+            <input type="text" class="form-control mono" placeholder="Masukkan ekspresi, mis: (2+3)*4^2 atau 200*10%" autocomplete="off" />
           </div>
         </div>
+        <div class="col-12 col-lg-4">
+          <input type="text" class="form-control mono" readonly placeholder="Hasil..." />
+        </div>
+        <div class="col-12 col-lg-2 d-flex gap-2 justify-content-lg-end">
+          <button class="btn btn-outline-primary btn-sm" type="button">Copy Input</button>
+          <button class="btn btn-outline-success btn-sm" type="button">Copy Output</button>
+        </div>
       `;
-      return col;
-    }
 
-    // Buat 10 buah
-    for (let i = 1; i <= 10; i++) {
-      calcList.appendChild(makeCalcCard(i));
-    }
+      const inputEl = wrapper.querySelector('input[type="text"].form-control.mono');
+      const outputEl = wrapper.querySelectorAll('input[type="text"].form-control.mono')[1];
+      const btnCopyIn = wrapper.querySelectorAll('button')[0];
+      const btnCopyOut = wrapper.querySelectorAll('button')[1];
 
-    function setHint(i, text, type) {
-      const hint = document.getElementById(`hint-${i}`);
-      hint.textContent = text || "";
-      hint.className = "form-text " + (type === "error" ? "text-danger" : "text-muted");
-    }
-
-    function updateResult(i, raw) {
-      const out = document.getElementById(`out-${i}`);
-      try {
-        const res = tryEvaluate(raw);
+      inputEl.addEventListener('input', () => {
+        const expr = inputEl.value;
+        const res = safeEvalExpression(expr);
         if (res.ok) {
-          out.value = res.value;
-          setHint(i, raw.trim() ? "OK" : "", raw.trim() ? "ok" : "ok");
+          outputEl.value = formatNumber(res.value);
+          outputEl.classList.remove('result-bad');
+          outputEl.classList.add('result-good');
         } else {
-          out.value = res.value;
-          setHint(i, "Ekspresi tidak valid / hasil tidak terdefinisi", "error");
+          outputEl.value = res.message;
+          outputEl.classList.remove('result-good');
+          outputEl.classList.add('result-bad');
         }
+      });
+
+      btnCopyIn.addEventListener('click', async () => {
+        await copyToClipboard(inputEl.value ?? '');
+        showToast('Input disalin.');
+      });
+
+      btnCopyOut.addEventListener('click', async () => {
+        await copyToClipboard(outputEl.value ?? '');
+        showToast('Output disalin.');
+      });
+
+      rowState.push({ inputEl, outputEl });
+      return wrapper;
+    }
+
+    for (let i = 0; i < ROW_COUNT; i++) rowsEl.appendChild(createRow(i));
+
+    btnClearAll.addEventListener('click', () => {
+      rowState.forEach(r => {
+        r.inputEl.value = '';
+        r.outputEl.value = '';
+        r.outputEl.classList.remove('result-good','result-bad');
+      });
+      showToast('Semua baris dibersihkan.');
+      rowState[0]?.inputEl?.focus();
+    });
+
+    // ---------- Clipboard ----------
+    async function copyToClipboard(text) {
+      try {
+        await navigator.clipboard.writeText(text);
       } catch (e) {
-        out.value = "Error";
-        setHint(i, e.message || "Ekspresi tidak valid", "error");
+        // fallback
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
       }
     }
 
-    // Event delegation: input real-time + tombol clear
-    document.addEventListener("input", (e) => {
-      const el = e.target;
-      if (el?.dataset?.role === "expr") {
-        const i = Number(el.dataset.index);
-        updateResult(i, el.value);
-      }
-    });
+    // ---------- Toast ----------
+    function showToast(msg) {
+      const toast = document.createElement('div');
+      toast.className = 'alert alert-dark shadow-sm py-2 px-3 mb-2';
+      toast.textContent = msg;
+      document.getElementById('toastArea').appendChild(toast);
+      setTimeout(() => toast.remove(), 1500);
+    }
 
-    document.addEventListener("click", (e) => {
-      const btn = e.target.closest("button[data-action='clear']");
-      if (!btn) return;
-      const i = Number(btn.dataset.index);
-      const expr = document.getElementById(`expr-${i}`);
-      const out = document.getElementById(`out-${i}`);
-      expr.value = "";
-      out.value = "";
-      setHint(i, "", "ok");
-      expr.focus();
-    });
+    // ---------- Expression Evaluator ----------
+    // Rules:
+    // - Allow digits, dot, spaces, + - * / ( ) ^ %
+    // - Interpret ^ as exponent (convert to **)
+    // - Percent postfix: "10%" => "(10/100)"
+    //   (works for "200*10%" => "200*(10/100)")
+    // - Keep JS modulo (%) as is, unless it is postfix percent (number%)
+    // Safety:
+    // - Reject any invalid characters
+    // - Reject repeated dangerous sequences, and limit length
+    function safeEvalExpression(input) {
+      const exprRaw = (input || '').trim();
+      if (!exprRaw) return { ok: true, value: 0 };
+
+      if (exprRaw.length > 200) return { ok: false, message: 'Terlalu panjang.' };
+
+      // Only allow these chars
+      const allowed = /^[0-9+\-*/().^\s%]+$/;
+      if (!allowed.test(exprRaw)) return { ok: false, message: 'Karakter tidak valid.' };
+
+      // Convert ^ => **
+      let expr = exprRaw.replace(/\^/g, '**');
+
+      // Convert postfix percent: number% => (number/100)
+      // Handles decimals like 12.5%
+      // Does NOT convert modulo usage like "5%2" because there is a digit after % (lookahead negative)
+      expr = expr.replace(/(\d+(?:\.\d+)?)\s*%\b(?!\s*\d)/g, '($1/100)');
+
+      // Also handle cases like "(10)%": treat as modulo, not percent.
+      // For percent after closing paren, user can write: "(10)*10%" or "((10))*10%" etc.
+
+      // Basic parentheses balance check (quick)
+      let bal = 0;
+      for (const ch of expr) {
+        if (ch === '(') bal++;
+        if (ch === ')') bal--;
+        if (bal < 0) return { ok: false, message: 'Kurung tidak seimbang.' };
+      }
+      if (bal !== 0) return { ok: false, message: 'Kurung tidak seimbang.' };
+
+      // Evaluate with Function in a restricted manner
+      try {
+        // Prevent sequences that could cause surprises
+        // (We already block letters, but still keep it tidy)
+        if (/[*]{3,}/.test(expr)) return { ok: false, message: 'Operator tidak valid.' };
+
+        const fn = new Function(`"use strict"; return (${expr});`);
+        const val = fn();
+
+        if (typeof val !== 'number' || Number.isNaN(val)) return { ok: false, message: 'Hasil tidak valid.' };
+        if (!Number.isFinite(val)) return { ok: false, message: 'Tak hingga.' };
+        return { ok: true, value: val };
+      } catch (e) {
+        return { ok: false, message: 'Error ekspresi.' };
+      }
+    }
+
+    function formatNumber(n) {
+      // Show up to 12 significant digits, trim trailing zeros
+      const s = Number(n).toPrecision(12);
+      const num = Number(s);
+      return String(num);
+    }
   </script>
 </body>
 </html>
