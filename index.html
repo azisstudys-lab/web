@@ -3,169 +3,249 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Kalkulator Realtime 10 Input</title>
+  <title>Kalkulator Realtime 10 Input/Output</title>
+
+  <!-- Bootstrap 5 -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+
+  <style>
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .outbox { min-height: 2.5rem; }
+  </style>
 </head>
 <body class="bg-light">
+
   <div class="container py-4">
     <div class="d-flex align-items-center justify-content-between mb-3">
-      <h1 class="h4 m-0">Kalkulator Realtime (10 Input)</h1>
-      <button id="clearAll" class="btn btn-outline-secondary btn-sm">Clear semua</button>
+      <div>
+        <h1 class="h4 mb-1">Kalkulator Realtime (10 Baris)</h1>
+        <div class="text-muted small">
+          Karakter diizinkan: angka, spasi, <span class="mono">* / ( ) + - ^ % . ,</span>
+        </div>
+      </div>
+      <button id="btnClearAll" class="btn btn-outline-danger btn-sm">Clear Semua</button>
     </div>
 
-    <div class="alert alert-info py-2 small">
-      Input yang diizinkan: <code>0-9</code> dan <code>* / ( ) + - ^</code>. Spasi juga boleh.
-      Pangkat pakai <code>^</code> (contoh: <code>2^3</code>).
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <div id="rows" class="vstack gap-3"></div>
+      </div>
     </div>
 
-    <div class="row g-3" id="calcGrid"></div>
+    <div class="text-muted small mt-3">
+      Tips: kamu bisa menulis seperti <span class="mono">(10+2)*3^2</span> atau <span class="mono">100%30</span>.
+    </div>
   </div>
 
   <script>
-    // Buat 10 pasang input-output
-    const grid = document.getElementById('calcGrid');
+    // ===== Utilities =====
+    const ALLOWED_RE = /^[0-9\s*\/()+\-^%.,]*$/;  // hanya karakter ini
+    const DISPLAY_ERR = (msg) => msg;
 
-    for (let i = 1; i <= 10; i++) {
-      const col = document.createElement('div');
-      col.className = 'col-12';
+    function sanitizeInput(raw) {
+      // ubah koma jadi titik untuk desimal (opsional)
+      let s = raw.replaceAll(',', '.');
 
-      col.innerHTML = `
-        <div class="card shadow-sm">
-          <div class="card-body">
-            <div class="row g-2 align-items-center">
-              <div class="col-12 col-lg-6">
-                <label class="form-label mb-1">Input ${i}</label>
-                <input
-                  type="text"
-                  class="form-control expr-input"
-                  placeholder="Contoh: (10+2)*3^2"
-                  inputmode="numeric"
-                  autocomplete="off"
-                  spellcheck="false"
-                  data-index="${i}"
-                />
-                <div class="form-text text-danger d-none" id="err-${i}">Karakter tidak valid.</div>
-              </div>
-
-              <div class="col-12 col-lg-6">
-                <label class="form-label mb-1">Output ${i}</label>
-                <div class="input-group">
-                  <input type="text" class="form-control bg-white expr-output" id="out-${i}" readonly value="" />
-                  <button class="btn btn-outline-primary copy-btn" type="button" data-copy="#out-${i}">Copy</button>
-                </div>
-                <div class="form-text" id="hint-${i}"></div>
-              </div>
-            </div>
-          </div>
-        </div>
-      `;
-      grid.appendChild(col);
+      // buang karakter selain allowed
+      // (tetap kita validasi juga; ini "auto-clean")
+      s = s.replace(/[^0-9\s*\/()+\-^%.,]/g, '');
+      return s;
     }
 
-    const ALLOWED = /^[0-9+\-*/^()\s.]*$/; // hanya angka, operator, kurung, spasi, titik (desimal)
-    const inputs = document.querySelectorAll('.expr-input');
+    function normalizeExpression(expr) {
+      // Trim & standar
+      let s = expr.trim();
 
-    function safeEval(expr) {
-      // Konversi ^ menjadi ** untuk pangkat
-      const jsExpr = expr.replace(/\^/g, '**');
+      // ganti ^ jadi ** (pangkat)
+      // contoh: 2^3 -> 2**3
+      s = s.replaceAll('^', '**');
 
-      // Evaluasi expression (karena sudah difilter ketat)
-      // Tetap bungkus dengan Function agar tidak mengakses scope lain
-      return Function('"use strict"; return (' + jsExpr + ')')();
+      return s;
+    }
+
+    function safeEvalMath(expr) {
+      // Validasi karakter: setelah normalisasi, '^' sudah jadi '**'
+      // Jadi allowed char untuk eval jadi: angka, spasi, * / ( ) + - % . dan bintang ganda (**)
+      // Pastikan tidak ada huruf / karakter aneh.
+      if (!/^[0-9\s*\/()+\-%.*]*$/.test(expr)) {
+        throw new Error("Karakter tidak valid.");
+      }
+
+      // Cek kurung seimbang sederhana
+      let balance = 0;
+      for (const ch of expr) {
+        if (ch === '(') balance++;
+        if (ch === ')') balance--;
+        if (balance < 0) throw new Error("Kurung tidak seimbang.");
+      }
+      if (balance !== 0) throw new Error("Kurung tidak seimbang.");
+
+      // Hindari ekspresi kosong
+      if (!expr.trim()) return "";
+
+      // Eval dengan Function (tanpa akses variabel luar)
+      // Kita tidak izinkan huruf, jadi tidak bisa memanggil fungsi JS.
+      const fn = new Function(`"use strict"; return (${expr});`);
+      const val = fn();
+
+      if (typeof val !== "number" || !Number.isFinite(val)) {
+        throw new Error("Hasil tidak valid.");
+      }
+
+      return val;
     }
 
     function formatNumber(n) {
-      // Format ringkas; kalau besar/desimal panjang tetap terbaca
-      if (!Number.isFinite(n)) return String(n);
-      // Hilangkan -0
-      if (Object.is(n, -0)) n = 0;
-      return String(n);
+      // tampilkan rapi, tapi tidak memaksa locale
+      // batasi panjang desimal jika terlalu panjang
+      const s = String(n);
+      if (s.includes('e') || s.includes('E')) return s; // scientific notation
+      const [a, b] = s.split('.');
+      if (!b) return a;
+      const trimmed = b.slice(0, 12).replace(/0+$/,'');
+      return trimmed ? `${a}.${trimmed}` : a;
     }
 
-    function computeFor(inputEl) {
-      const idx = inputEl.dataset.index;
-      const outEl = document.getElementById(`out-${idx}`);
-      const errEl = document.getElementById(`err-${idx}`);
-      const hintEl = document.getElementById(`hint-${idx}`);
-
-      let raw = inputEl.value;
-
-      // Filter karakter yang tidak valid (langsung dibersihkan)
-      const cleaned = raw.replace(/[^0-9+\-*/^()\s.]/g, '');
-      if (cleaned !== raw) {
-        inputEl.value = cleaned;
-        raw = cleaned;
-      }
-
-      // Validasi: hanya allowed
-      if (!ALLOWED.test(raw)) {
-        errEl.classList.remove('d-none');
-        outEl.value = '';
-        hintEl.textContent = '';
-        return;
-      } else {
-        errEl.classList.add('d-none');
-      }
-
-      const expr = raw.trim();
-      if (!expr) {
-        outEl.value = '';
-        hintEl.textContent = '';
-        return;
-      }
-
-      try {
-        const result = safeEval(expr);
-        outEl.value = formatNumber(result);
-        hintEl.textContent = '';
-      } catch (e) {
-        outEl.value = '';
-        hintEl.textContent = 'Ekspresi belum valid / belum lengkap.';
-      }
+    async function pasteFromClipboard() {
+      if (!navigator.clipboard?.readText) throw new Error("Clipboard API tidak tersedia di browser ini.");
+      return await navigator.clipboard.readText();
     }
 
-    inputs.forEach(el => {
-      // realtime hitung
-      el.addEventListener('input', () => computeFor(el));
+    async function copyToClipboard(text) {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard API tidak tersedia di browser ini.");
+      await navigator.clipboard.writeText(text);
+    }
 
-      // cegah karakter selain yang diizinkan saat mengetik (lebih nyaman)
-      el.addEventListener('beforeinput', (ev) => {
-        if (!ev.data) return; // backspace, delete, dll
-        if (!ALLOWED.test(ev.data)) ev.preventDefault();
+    function setStatus(el, ok, message) {
+      el.textContent = message || "";
+      el.classList.toggle("text-danger", !ok);
+      el.classList.toggle("text-success", ok);
+    }
+
+    // ===== UI Builder =====
+    const rowsEl = document.getElementById("rows");
+
+    function buildRow(i) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "border rounded-3 p-3 bg-white";
+
+      wrapper.innerHTML = `
+        <div class="row g-2 align-items-start">
+          <div class="col-12 col-lg-6">
+            <label class="form-label mb-1">Input #${i}</label>
+            <div class="input-group">
+              <input type="text" class="form-control mono" placeholder="contoh: (10+2)*3^2" inputmode="decimal" />
+              <button class="btn btn-outline-secondary btnPaste" type="button" title="Paste ke input">Paste</button>
+              <button class="btn btn-outline-danger btnClear" type="button" title="Clear baris ini">Clear</button>
+            </div>
+            <div class="form-text">Hanya angka & operator: <span class="mono">* / ( ) + - ^ %</span></div>
+          </div>
+
+          <div class="col-12 col-lg-6">
+            <label class="form-label mb-1">Output #${i}</label>
+            <div class="d-flex gap-2">
+              <div class="flex-grow-1">
+                <div class="form-control mono outbox" data-output style="background:#f8f9fa;"></div>
+              </div>
+              <div class="d-flex flex-column gap-2">
+                <button class="btn btn-outline-primary btnCopy" type="button" title="Copy output">Copy</button>
+              </div>
+            </div>
+            <div class="small mt-1" data-status></div>
+          </div>
+        </div>
+      `;
+
+      const input = wrapper.querySelector("input");
+      const out = wrapper.querySelector("[data-output]");
+      const status = wrapper.querySelector("[data-status]");
+      const btnPaste = wrapper.querySelector(".btnPaste");
+      const btnCopy = wrapper.querySelector(".btnCopy");
+      const btnClear = wrapper.querySelector(".btnClear");
+
+      function recompute() {
+        // auto-sanitize + validasi
+        const raw = input.value;
+        const sanitized = sanitizeInput(raw);
+
+        if (raw !== sanitized) input.value = sanitized;
+
+        if (!ALLOWED_RE.test(sanitized)) {
+          out.textContent = "";
+          setStatus(status, false, DISPLAY_ERR("Karakter tidak diizinkan."));
+          return;
+        }
+
+        try {
+          const expr = normalizeExpression(sanitized);
+          const res = safeEvalMath(expr);
+
+          if (res === "") {
+            out.textContent = "";
+            setStatus(status, true, "");
+            return;
+          }
+
+          out.textContent = formatNumber(res);
+          setStatus(status, true, "OK");
+        } catch (e) {
+          out.textContent = "";
+          setStatus(status, false, e?.message || "Error");
+        }
+      }
+
+      input.addEventListener("input", recompute);
+
+      btnClear.addEventListener("click", () => {
+        input.value = "";
+        recompute();
+        input.focus();
       });
 
-      // hitung awal (kalau ada value)
-      computeFor(el);
-    });
+      btnPaste.addEventListener("click", async () => {
+        try {
+          const text = await pasteFromClipboard();
+          input.value = sanitizeInput(text);
+          recompute();
+          input.focus();
+          setStatus(status, true, "Paste berhasil");
+          setTimeout(() => setStatus(status, true, ""), 1200);
+        } catch (e) {
+          setStatus(status, false, e?.message || "Gagal paste");
+        }
+      });
 
-    // Tombol copy output
-    document.addEventListener('click', async (e) => {
-      const btn = e.target.closest('.copy-btn');
-      if (!btn) return;
+      btnCopy.addEventListener("click", async () => {
+        try {
+          const text = out.textContent || "";
+          if (!text) {
+            setStatus(status, false, "Output kosong, tidak ada yang di-copy.");
+            return;
+          }
+          await copyToClipboard(text);
+          setStatus(status, true, "Copy berhasil");
+          setTimeout(() => setStatus(status, true, ""), 1200);
+        } catch (e) {
+          setStatus(status, false, e?.message || "Gagal copy");
+        }
+      });
 
-      const sel = btn.getAttribute('data-copy');
-      const out = document.querySelector(sel);
-      const text = out?.value ?? '';
+      // initial
+      recompute();
 
-      try {
-        await navigator.clipboard.writeText(text);
-        const old = btn.textContent;
-        btn.textContent = 'Copied!';
-        setTimeout(() => (btn.textContent = old), 900);
-      } catch {
-        // fallback: select + execCommand
-        out.focus();
-        out.select();
-        document.execCommand('copy');
-        const old = btn.textContent;
-        btn.textContent = 'Copied!';
-        setTimeout(() => (btn.textContent = old), 900);
-      }
-    });
+      return wrapper;
+    }
 
-    // Clear semua
-    document.getElementById('clearAll').addEventListener('click', () => {
-      inputs.forEach(el => { el.value = ''; computeFor(el); });
+    // render 10 rows
+    for (let i = 1; i <= 10; i++) {
+      rowsEl.appendChild(buildRow(i));
+    }
+
+    // Clear all
+    document.getElementById("btnClearAll").addEventListener("click", () => {
+      rowsEl.querySelectorAll("input").forEach(inp => inp.value = "");
+      // trigger recompute by dispatching input
+      rowsEl.querySelectorAll("input").forEach(inp => inp.dispatchEvent(new Event("input")));
     });
   </script>
 </body>
