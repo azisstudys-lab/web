@@ -1,0 +1,141 @@
+﻿<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kalkulator 10 Baris (Real-time)</title>
+
+  <!-- Bootstrap CSS (CDN) -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+  <div class="container py-4">
+    <div class="d-flex align-items-center justify-content-between mb-3">
+      <h1 class="h4 m-0">Kalkulator Real-time (10 Baris)</h1>
+      <button id="btnReset" class="btn btn-outline-secondary btn-sm">Reset</button>
+    </div>
+
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <p class="text-muted small mb-3">
+          Isi angka, pilih operator (+, -, ×, ÷). Output otomatis terhitung.
+        </p>
+
+        <div id="rows" class="vstack gap-2"></div>
+      </div>
+    </div>
+
+    <div class="text-muted small mt-3">
+      Catatan: Pembagian dengan 0 akan menampilkan "∞" atau "NaN" sesuai hasil.
+    </div>
+  </div>
+
+  <script>
+    // Buat 10 baris input/output
+    const ROW_COUNT = 10;
+    const rowsEl = document.getElementById("rows");
+
+    function createRow(i) {
+      const row = document.createElement("div");
+      row.className = "row g-2 align-items-center";
+
+      row.innerHTML = `
+        <div class="col-12 col-md-1">
+          <div class="badge text-bg-primary w-100 py-2">#${i}</div>
+        </div>
+
+        <div class="col-12 col-md-3">
+          <input type="number" step="any" class="form-control a" placeholder="Angka A" aria-label="Angka A baris ${i}">
+        </div>
+
+        <div class="col-12 col-md-2">
+          <select class="form-select op" aria-label="Operator baris ${i}">
+            <option value="+">Tambah (+)</option>
+            <option value="-">Kurang (-)</option>
+            <option value="*">Kali (×)</option>
+            <option value="/">Bagi (÷)</option>
+          </select>
+        </div>
+
+        <div class="col-12 col-md-3">
+          <input type="number" step="any" class="form-control b" placeholder="Angka B" aria-label="Angka B baris ${i}">
+        </div>
+
+        <div class="col-12 col-md-3">
+          <input type="text" class="form-control out" placeholder="Hasil" aria-label="Hasil baris ${i}" readonly>
+        </div>
+      `;
+
+      return row;
+    }
+
+    function parseNum(val) {
+      // kalau kosong -> NaN (biar output kosong)
+      if (val === "" || val === null || val === undefined) return NaN;
+      return Number(val);
+    }
+
+    function compute(a, op, b) {
+      switch (op) {
+        case "+": return a + b;
+        case "-": return a - b;
+        case "*": return a * b;
+        case "/": return a / b;
+        default: return NaN;
+      }
+    }
+
+    function formatResult(x) {
+      if (Number.isNaN(x)) return "";
+      // tampilkan real number rapi (tanpa memaksa pembulatan terlalu agresif)
+      // Hindari 0.30000000004: pakai pembulatan ringan
+      const rounded = Math.round((x + Number.EPSILON) * 1e12) / 1e12;
+      return String(rounded);
+    }
+
+    function updateRow(row) {
+      const aEl = row.querySelector(".a");
+      const bEl = row.querySelector(".b");
+      const opEl = row.querySelector(".op");
+      const outEl = row.querySelector(".out");
+
+      const a = parseNum(aEl.value);
+      const b = parseNum(bEl.value);
+      const op = opEl.value;
+
+      const res = compute(a, op, b);
+      outEl.value = formatResult(res);
+    }
+
+    // Render 10 baris
+    for (let i = 1; i <= ROW_COUNT; i++) {
+      const row = createRow(i);
+      rowsEl.appendChild(row);
+    }
+
+    // Event delegation: real-time update untuk semua input/select
+    rowsEl.addEventListener("input", (e) => {
+      const row = e.target.closest(".row");
+      if (!row) return;
+      updateRow(row);
+    });
+
+    rowsEl.addEventListener("change", (e) => {
+      const row = e.target.closest(".row");
+      if (!row) return;
+      updateRow(row);
+    });
+
+    // Reset
+    document.getElementById("btnReset").addEventListener("click", () => {
+      const allRows = rowsEl.querySelectorAll(".row");
+      allRows.forEach(row => {
+        row.querySelector(".a").value = "";
+        row.querySelector(".b").value = "";
+        row.querySelector(".op").value = "+";
+        row.querySelector(".out").value = "";
+      });
+    });
+  </script>
+</body>
+</html>
